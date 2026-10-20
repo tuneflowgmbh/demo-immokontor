@@ -70,7 +70,7 @@
         <span class="item-top"><span class="item-name">${esc(name(a))}</span>${portalBadge(a.portal)}</span>
         <span class="item-sub">${esc(w ? w.titel : '')} · ${uhr(a.erstellt)}</span>
         <span class="item-bot">${a.wartet && !a.extraktion ? '<span class="tippt">Assistent liest</span>' : empBadge(p)}<span class="ampeln" aria-hidden="true">${ampeln}</span></span>
-        <span class="item-status">${esc(st.label)}</span>
+        <span class="item-status">${esc(st.label)}${(a.offeneFragen || []).length ? ` · ${a.offeneFragen.length} offene ${a.offeneFragen.length === 1 ? 'Frage' : 'Fragen'}` : ''}</span>
       </button>`;
     }).join('');
     return `<div class="toolbar"><label class="inline"><span class="label">Wohnung</span><select data-act="filter">${opts}</select></label>${s.anfragen.length ? pfBtn : ''}</div>
@@ -107,6 +107,7 @@
     return `<div class="panel">${kopf}${empBox}
       <section><h4 class="label">Angaben aus der Anfrage</h4>${daten}${zeit}</section>
       <section><h4 class="label">Prüfung gegen Ihre Vorgaben</h4>${pr}</section>
+      ${(a.offeneFragen || []).length ? `<section><h4 class="label">Offene Fragen an die Verwaltung</h4><ul class="hinweise offen">${a.offeneFragen.map(f => `<li>${esc(f.text)} <span class="small">${uhr(f.ts)} Uhr</span></li>`).join('')}</ul><p class="small">Der Assistent hat dem Bewerber gesagt, dass Sie sich dazu melden.</p></section>` : ''}
       <section class="entscheidung"><h4 class="label">Ihre Entscheidung</h4>${vEntscheidung(a, w, p)}</section>
       ${verlaufBlock(a)}</div>`;
   }

@@ -91,6 +91,7 @@
       a.extraktion = merge(a.extraktion, r.data.extraktion, erste);
       a.verweigert = Array.from(new Set(a.verweigert.concat(r.data.verweigert || [])));
       if (erste) S.zaehler.gelesen++;
+      if (r.data.offene_frage) (a.offeneFragen = a.offeneFragen || []).push({ text: r.data.offene_frage, ts: Date.now() });
       antworte(a, w, r.data, false, erste);
     } else if (erste && a.beispielId) {
       const b = IK.beispielAnfragen.find(x => x.id === a.beispielId);

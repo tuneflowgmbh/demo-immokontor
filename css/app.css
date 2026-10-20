@@ -166,6 +166,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--tf-accen
 .entscheidung .btn{width:100%}
 @media (min-width:640px){ .entscheidung .btn{width:auto} }
 .warn{color:var(--tf-ink-2);background:var(--tf-warn-soft);padding:8px 12px;border-radius:var(--r-in);margin-bottom:12px}
+.hinweise.offen{margin-top:0;background:var(--tf-warn-soft);color:var(--tf-ink)}
 .info{display:flex;align-items:center;gap:10px;font-weight:500}
 .verlauf{margin-top:16px;border-top:1px solid var(--tf-line);padding-top:12px}
 .verlauf summary{cursor:pointer;font:500 14px/1.4 var(--tf-font);color:var(--tf-ink-2);min-height:36px;display:flex;align-items:center}
