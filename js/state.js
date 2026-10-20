@@ -84,7 +84,7 @@
       a.agentMs = Math.round(performance.now() - t0); a.modell = r.data.modell; a.offline = false;
       a.extraktion = merge(a.extraktion, r.data.extraktion, erste);
       if (erste) S.zaehler.gelesen++;
-      antworte(a, w, r.data.antwort, r.data.absicht, false, erste);
+      antworte(a, w, r.data.antwort, r.data.absicht, false, erste, text);
     } else if (erste && a.beispielId) {
       const b = IK.beispielAnfragen.find(x => x.id === a.beispielId);
       a.extraktion = JSON.parse(JSON.stringify(b.fallback)); a.agentMs = null; a.offline = true;
@@ -96,14 +96,14 @@
     IK.speichern(); onUpdate();
   };
 
-  function antworte(a, w, antwort, absicht, offline, erste) {
+  function antworte(a, w, antwort, absicht, offline, erste, text) {
     const e = a.extraktion, p = IK.pruefe(w, e);
     if (e.ist_bewerbung === false) {
       if (erste) msg(a, { von: 'system', typ: 'sonstige', text: 'Keine Wohnungsanfrage erkannt. Die Nachricht ist als sonstige Post abgelegt und geht an das Postfach der Verwaltung. Es wird keine Antwort verschickt.' });
-      else msg(a, { von: 'agent', text: IK.vorlage.agent(w, e, { offen: false, kern: IK.kernSaeubern(antwort) }) });
+      else msg(a, { von: 'agent', text: IK.vorlage.agent(w, e, { offen: false, kern: IK.kernSaeubern(antwort, text) }) });
       return;
     }
-    const kern = offline ? '' : IK.kernSaeubern(antwort);
+    const kern = offline ? '' : IK.kernSaeubern(antwort, text);
     if (a.status === 'offen') {
       msg(a, { von: 'agent', text: IK.vorlage.agent(w, e, { offen: true, erste, kern, fehlend: p.fehlend }), offline });
       if (p.fehlend.length) {

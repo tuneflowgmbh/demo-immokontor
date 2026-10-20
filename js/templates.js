@@ -54,17 +54,20 @@ ${GRUSS}`
   };
 
   /* Antwort des Assistenten an den Bewerber: Kern von der KI, Rahmen und Rückfragen aus den Regeln. */
-  IK.kernSaeubern = function (t) {
-    if (!t) return '';
+  /* Sätze trennen, ohne an Abkürzungen wie „Nr.“ oder „z. B.“ zu brechen. */
+  const saetze = t => t.replace(/\b(Nr|ca|bzw|ggf|inkl|Str|evtl|z\. ?B|u\. ?a|d\. ?h)\. /g, '$1.\u00a0').split(/(?<=[.!?]) +(?=[A-ZÄÖÜ„"])/);
+  IK.kernSaeubern = function (t, nachricht) {
+    if (!t || !/\?/.test(nachricht || '')) return '';
     let x = t.trim().replace(/^guten (tag|morgen|abend)[^\n]*\n+/i, '').replace(/^(hallo|liebe[rs]?|sehr geehrte[rs]?)[^\n]*,\s*\n+/i, '');
     const g = x.search(/\n\s*(viele|beste|freundliche|liebe) grüße/i); if (g >= 0) x = x.slice(0, g);
     x = x.replace(/^vielen dank[^.!\n]*[.!]\s*/i, '').trim();
+    x = saetze(x).filter(z => !/^bitte\b/i.test(z)).join(' ').trim();
     return x.length > 500 ? x.slice(0, 500).replace(/\s+\S*$/, '') + ' …' : x;
   };
   IK.vorlage.agent = function (w, e, o) {
     const teile = [];
     let kern = o.kern || '';
-    if (o.offen) kern = kern.split(/(?<=[.!?])\s+/).filter(x => !/verwaltung prüft|meldet sich in der regel|angaben sind vollständig/i.test(x)).join(' ').trim();
+    if (o.offen) kern = saetze(kern).filter(x => !/verwaltung prüft|meldet sich in der regel|angaben sind vollständig/i.test(x)).join(' ').trim();
     teile.push(o.offen ? (o.erste ? `vielen Dank für Ihre Anfrage zur Wohnung „${w.titel}“.` : 'vielen Dank für Ihre Angaben.') : 'vielen Dank für Ihre Nachricht.');
     if (kern) teile.push(kern);
     if (o.offen) teile.push(o.fehlend.length
