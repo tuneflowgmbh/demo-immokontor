@@ -126,9 +126,15 @@
       }
       return;
     }
-    if (a.status === 'termin' && (absicht === 'umbuchen' || absicht === 'termin_absagen')) {
+    const neuerTermin = d.termin_wahl && (!a.termin || d.termin_wahl !== a.termin.datum + ' ' + a.termin.zeit) ? d.termin_wahl : null;
+    if (a.status === 'termin' && (absicht === 'umbuchen' || absicht === 'termin_absagen' || (absicht === 'termin_waehlen' && neuerTermin))) {
       a.termin = null; a.status = 'eingeladen';
       msg(a, { von: 'system', text: 'Der bisherige Termin ist wieder frei.' });
+      if (neuerTermin && absicht !== 'termin_absagen') {
+        const [datum, zeit] = neuerTermin.split(' ');
+        if (IK.bucheTermin(a.id, datum, zeit, true)) return;
+        msg(a, { von: 'system', text: 'Der gewünschte Termin ist nicht frei. Bitte einen der angezeigten Termine wählen.' });
+      }
       msg(a, { von: 'agent', typ: 'slots', text: 'Freie Termine' });
       return;
     }
