@@ -40,13 +40,13 @@
   IK.loescheWohnung = id => { S.wohnungen = S.wohnungen.filter(w => w.id !== id); S.anfragen = S.anfragen.filter(a => a.wohnungId !== id); IK.speichern(); };
 
   IK.neueAnfrage = (wohnungId, portal, beispielId) => {
-    const a = { id: IK.uid('a'), wohnungId, portal, beispielId: beispielId || null, erstellt: Date.now(), extraktion: null, nachrichten: [], status: 'offen', termin: null, agentMs: null, wartet: false };
+    const a = { id: IK.uid('a'), wohnungId, portal, beispielId: beispielId || null, erstellt: Date.now(), extraktion: null, verweigert: [], nachrichten: [], status: 'offen', termin: null, agentMs: null, wartet: false };
     S.anfragen.unshift(a); IK.speichern(); return a;
   };
 
   IK.beispielText = (b, w) => b.text.replace(/\{TITEL\}/g, w.titel).replace(/\{STADTTEIL\}/g, w.stadtteil);
 
-  const inserat = w => ({ titel: w.titel, lage: `${w.strasse.replace(/\s*\d+\w*$/, '')}, ${w.stadtteil}`, stadtteil: w.stadtteil, zimmer: +w.zimmer, flaeche: +w.flaeche, kalt: +w.kalt, warm: +w.warm, etage: w.etage, frei_ab: w.frei_ab, beschreibung: w.beschreibung });
+  const inserat = (w, eingeladen) => ({ titel: w.titel, adresse: eingeladen ? `${w.strasse}, ${w.stadtteil}, ${w.etage}` : null, lage: `${w.strasse.replace(/\s*\d+\w*$/, '')}, ${w.stadtteil}`, stadtteil: w.stadtteil, zimmer: +w.zimmer, flaeche: +w.flaeche, kalt: +w.kalt, warm: +w.warm, etage: w.etage, frei_ab: w.frei_ab, beschreibung: w.beschreibung });
 
   function merge(alt, neu, erste) {
     if (!alt) return neu;
@@ -68,56 +68,80 @@
     return 'Der Assistent ist gerade nicht erreichbar. Bitte versuchen Sie es gleich noch einmal.';
   }
 
-  /* Der Bewerber schreibt. Der Assistent liest aus, die Seite prüft und antwortet. */
+  /* Der Bewerber schreibt. Der Assistent liest aus und antwortet, die Seite prüft und steuert Termine. */
+  const PHASE = { offen: 'anfrage', eingeladen: 'eingeladen', termin: 'termin_gebucht', abgesagt: 'abgesagt', zurueckgezogen: 'zurueckgezogen' };
   IK.bewerberSchreibt = async function (anfrageId, text, onUpdate) {
     const a = IK.anfrage(anfrageId); if (!a) return;
     const w = IK.wohnung(a.wohnungId);
+    a.verweigert = a.verweigert || [];
     const erste = !a.nachrichten.some(m => m.von === 'bewerber');
     const verlauf = a.nachrichten.filter(m => (m.von === 'bewerber' || m.von === 'agent') && m.typ !== 'slots').map(m => ({ rolle: m.von, text: m.text }));
     msg(a, { von: 'bewerber', text, typ: erste ? 'mail' : null });
     a.wartet = true; IK.speichern(); onUpdate();
-    const phase = { offen: 'anfrage', eingeladen: 'eingeladen', termin: 'termin_gebucht', abgesagt: 'abgesagt' }[a.status];
+    const frei = ['eingeladen', 'termin'].includes(a.status) ? IK.slots(w, S.anfragen).filter(x => x.frei).slice(0, 24).map(x => x.datum + ' ' + x.zeit) : [];
     const t0 = performance.now();
-    const r = await IK.frageAgent({ modus: 'bewerber', inserat: inserat(w), pflichtfelder: IK.pflichtfelder(w), bisherige_extraktion: a.extraktion, verlauf, nachricht: text, phase });
+    const r = await IK.frageAgent({
+      modus: 'bewerber', inserat: inserat(w, ['eingeladen', 'termin'].includes(a.status)), pflichtfelder: IK.pflichtfelder(w), bisherige_extraktion: a.extraktion,
+      verweigert: a.verweigert, freie_termine: frei, termin: a.termin ? a.termin.datum + ' ' + a.termin.zeit : null,
+      verlauf, nachricht: text, phase: PHASE[a.status] || 'anfrage'
+    });
     a.wartet = false;
     if (r.ok) {
-      a.agentMs = Math.round(performance.now() - t0); a.modell = r.data.modell; a.offline = false;
+      a.agentMs = Math.round(performance.now() - t0); a.offline = false;
       a.extraktion = merge(a.extraktion, r.data.extraktion, erste);
+      a.verweigert = Array.from(new Set(a.verweigert.concat(r.data.verweigert || [])));
       if (erste) S.zaehler.gelesen++;
-      antworte(a, w, r.data.antwort, r.data.absicht, false, erste, text);
+      antworte(a, w, r.data, false, erste);
     } else if (erste && a.beispielId) {
       const b = IK.beispielAnfragen.find(x => x.id === a.beispielId);
       a.extraktion = JSON.parse(JSON.stringify(b.fallback)); a.agentMs = null; a.offline = true;
       S.zaehler.gelesen++;
-      antworte(a, w, null, 'anfrage', true, true);
+      antworte(a, w, { absicht: 'anfrage', antwort: '' }, true, true);
     } else {
       msg(a, { von: 'system', typ: 'fehler', text: fehlerText(r) });
     }
     IK.speichern(); onUpdate();
   };
 
-  function antworte(a, w, antwort, absicht, offline, erste, text) {
-    const e = a.extraktion, p = IK.pruefe(w, e);
-    if (e.ist_bewerbung === false) {
-      if (erste) msg(a, { von: 'system', typ: 'sonstige', text: 'Keine Wohnungsanfrage erkannt. Die Nachricht ist als sonstige Post abgelegt und geht an das Postfach der Verwaltung. Es wird keine Antwort verschickt.' });
-      else msg(a, { von: 'agent', text: IK.vorlage.agent(w, e, { offen: false, kern: IK.kernSaeubern(antwort, text) }) });
+  function antworte(a, w, d, offline, erste) {
+    const e = a.extraktion, p = IK.pruefe(w, e, a.verweigert), absicht = d.absicht;
+    if (e.ist_bewerbung === false && erste) {
+      msg(a, { von: 'system', typ: 'sonstige', text: 'Keine Wohnungsanfrage erkannt. Die Nachricht ist als sonstige Post abgelegt und geht an das Postfach der Verwaltung. Es wird keine Antwort verschickt.' });
       return;
     }
-    const kern = offline ? '' : IK.kernSaeubern(antwort, text);
-    if (a.status === 'offen') {
-      msg(a, { von: 'agent', text: IK.vorlage.agent(w, e, { offen: true, erste, kern, fehlend: p.fehlend }), offline });
-      if (p.fehlend.length) {
-        S.zaehler.rueckfragen++;
-        msg(a, { von: 'system', text: p.fehlend.length === 1 ? 'Der Assistent hat eine fehlende Angabe selbst nachgefragt.' : `Der Assistent hat ${p.fehlend.length} fehlende Angaben selbst nachgefragt.` });
-      } else {
-        msg(a, { von: 'system', typ: 'wartet', text: 'Angaben vollständig. Die Anfrage liegt jetzt mit Empfehlung bei der Verwaltung.' });
+    const txt = (!offline && d.antwort) ? d.antwort
+      : IK.vorlage.agent(w, e, { offen: a.status === 'offen', erste, kern: '', fehlend: p.fehlend });
+    msg(a, { von: 'agent', text: txt, offline });
+
+    if (absicht === 'zurueckziehen' && a.status !== 'zurueckgezogen' && a.status !== 'abgesagt') {
+      a.termin = null; a.status = 'zurueckgezogen';
+      msg(a, { von: 'system', text: 'Der Bewerber hat die Anfrage zurückgezogen. Ein gebuchter Termin ist wieder frei.' });
+      return;
+    }
+    if (a.status === 'eingeladen' && d.termin_wahl) {
+      const [datum, zeit] = d.termin_wahl.split(' ');
+      if (!IK.bucheTermin(a.id, datum, zeit, true)) {
+        msg(a, { von: 'system', text: 'Dieser Termin ist nicht mehr frei. Bitte einen der angezeigten Termine wählen.' });
+        msg(a, { von: 'agent', typ: 'slots', text: 'Freie Termine' });
       }
       return;
     }
-    msg(a, { von: 'agent', text: IK.vorlage.agent(w, e, { offen: false, kern }) });
-    if (absicht === 'umbuchen' && (a.status === 'eingeladen' || a.status === 'termin')) {
-      if (a.termin) { a.termin = null; a.status = 'eingeladen'; }
+    if (a.status === 'termin' && (absicht === 'umbuchen' || absicht === 'termin_absagen')) {
+      a.termin = null; a.status = 'eingeladen';
+      msg(a, { von: 'system', text: 'Der bisherige Termin ist wieder frei.' });
       msg(a, { von: 'agent', typ: 'slots', text: 'Freie Termine' });
+      return;
+    }
+    if (a.status === 'eingeladen' && absicht === 'umbuchen') { msg(a, { von: 'agent', typ: 'slots', text: 'Freie Termine' }); return; }
+    if (a.status !== 'offen') return;
+    if (p.fehlend.length) {
+      S.zaehler.rueckfragen++;
+      a.gemeldet = false;
+    } else if (!a.gemeldet) {
+      a.gemeldet = true;
+      msg(a, { von: 'system', typ: 'wartet', text: p.kriterien.some(k => k.verweigert)
+        ? 'Der Bewerber möchte keine weiteren Angaben machen. Die Anfrage liegt mit den vorhandenen Angaben bei der Verwaltung.'
+        : 'Angaben vollständig. Die Anfrage liegt jetzt mit Empfehlung bei der Verwaltung.' });
     }
   }
 
@@ -131,12 +155,12 @@
     a.entschieden = { aktion, ts: Date.now() };
     IK.speichern();
   };
-  IK.bucheTermin = function (anfrageId, datum, zeit) {
+  IK.bucheTermin = function (anfrageId, datum, zeit, ausChat) {
     const a = IK.anfrage(anfrageId), w = IK.wohnung(a.wohnungId);
     const s = IK.slots(w, S.anfragen).find(x => x.datum === datum && x.zeit === zeit);
     if (!s || !s.frei || a.status !== 'eingeladen') return false;
     a.termin = { datum, zeit }; a.status = 'termin';
-    msg(a, { von: 'bewerber', text: `Ich nehme den Termin am ${IK.fmt.tagKurz(datum)} um ${zeit} Uhr.` });
+    if (!ausChat) msg(a, { von: 'bewerber', text: `Ich nehme den Termin am ${IK.fmt.tagKurz(datum)} um ${zeit} Uhr.` });
     msg(a, { von: 'agent', typ: 'bestaetigung', text: IK.vorlage.bestaetigung(w, a.extraktion, a.termin) });
     msg(a, { von: 'system', text: 'Der Termin steht im Kalender der Verwaltung. Eine Bestätigung von Hand ist nicht mehr nötig.' });
     S.zaehler.termine++; IK.speichern(); return true;

@@ -15,7 +15,7 @@
   const sek = ms => (ms == null ? null : (ms / 1000).toLocaleString('de-DE', { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + ' s');
   const name = a => (a.extraktion && a.extraktion.name) || (a.wartet ? 'Neue Anfrage' : 'Ohne Namen');
 
-  function pruefung(a) { const w = IK.wohnung(a.wohnungId); return w ? IK.pruefe(w, a.extraktion) : null; }
+  const pruefung = a => IK.pruefeAnfrage(a);
   function statusInfo(a) {
     if (a.wartet && !a.extraktion) return { label: 'Wird gelesen', ton: 'grau' };
     const p = pruefung(a);
@@ -23,7 +23,9 @@
     if (a.status === 'eingeladen') return { label: 'Eingeladen, Terminwahl läuft', ton: 'gruen' };
     if (a.status === 'termin') return { label: `Termin ${F.tagKurz(a.termin.datum)} ${a.termin.zeit}`, ton: 'gruen' };
     if (a.status === 'abgesagt') return { label: 'Abgesagt', ton: 'grau' };
+    if (a.status === 'zurueckgezogen') return { label: 'Zurückgezogen', ton: 'grau' };
     if (p && p.fehlend.length) return { label: 'Rückfrage läuft', ton: 'gelb' };
+    if (p && p.kriterien.some(k => k.verweigert)) return { label: 'Unvollständig, liegt bei Ihnen', ton: 'gelb' };
     return { label: 'Vollständig, wartet auf Sie', ton: 'gruen' };
   }
   const empBadge = p => { const e = IK.EMPFEHLUNG[p ? p.empfehlung : 'leer']; return `<span class="emp emp-${e.ton}">${dot(e.ton)}${esc(e.label)}</span>`; };
@@ -87,7 +89,8 @@
       return `<div class="panel">${kopf}${empBox}<section><h4 class="label">Inhalt</h4><p>${esc(e.zusammenfassung || '')}</p>${zeit}</section>${verlaufBlock(a)}</div>`;
     }
     const pflicht = IK.pflichtfelder(w);
-    const zeile = (k, v, f) => `<div><dt>${k}</dt><dd>${v == null || v === '' ? (f && pflicht.includes(f) ? '<span class="fehlt">fehlt</span>' : '<span class="nv">nicht angegeben</span>') : esc(v)}</dd></div>`;
+    const vw = a.verweigert || [];
+    const zeile = (k, v, f) => `<div><dt>${k}</dt><dd>${v == null || v === '' ? (f && vw.includes(f) ? '<span class="fehlt">keine Angabe gewünscht</span>' : f && pflicht.includes(f) ? '<span class="fehlt">fehlt</span>' : '<span class="nv">nicht angegeben</span>') : esc(v)}</dd></div>`;
     const jn = v => (v == null ? null : v ? 'ja' : 'nein');
     const ht = e.haustiere || {};
     const daten = `<dl class="daten">
@@ -119,6 +122,7 @@
     if (a.status === 'eingeladen') return `<div class="info">${dot('gruen')}Eingeladen. Der Bewerber wählt seinen Termin direkt im Chat.</div><div class="row-btn"><button class="btn btn-2" data-act="zum-chat" data-id="${a.id}">Chat des Bewerbers öffnen</button><button class="btn btn-2" data-act="spaet-absage" data-id="${a.id}">Doch absagen</button></div>`;
     if (a.status === 'termin') return `<div class="info">${dot('gruen')}Termin gebucht: ${esc(F.tagLang(a.termin.datum))}, ${esc(a.termin.zeit)} Uhr.</div><div class="row-btn"><button class="btn btn-2" data-act="termin-ab" data-id="${a.id}">Termin absagen und neu anbieten</button><button class="btn btn-2" data-act="spaet-absage" data-id="${a.id}">Doch absagen</button></div>`;
     if (a.status === 'abgesagt') return `<div class="info">${dot('grau')}Absage gesendet.</div>`;
+    if (a.status === 'zurueckgezogen') return `<div class="info">${dot('grau')}Der Bewerber hat die Anfrage zurückgezogen.</div>`;
     const vorschlag = p.empfehlung === 'einladen' ? 'einladen' : p.empfehlung === 'absage' ? 'absage' : 'rueckfrage';
     const akt = UI.aktion[a.id] || vorschlag;
     const seg = [['einladen', 'Einladen'], ['rueckfrage', 'Rückfrage'], ['absage', 'Absage']].map(([k, l]) =>
@@ -213,7 +217,7 @@
     if (!liste.length) return `<h3>Auswirkung auf Anfragen</h3><p class="small">Zu dieser Wohnung gibt es noch keine Anfragen. Spielen Sie das Beispiel-Postfach ein, dann sehen Sie hier live, wie jede Änderung an den Vorgaben die Bewertung verschiebt.</p><button class="btn btn-2" data-act="postfach" data-wid="${w.id}" ${UI.postfach ? 'disabled' : ''}>${UI.postfach ? `Wird gelesen: ${UI.postfach.fertig} von ${UI.postfach.gesamt}` : 'Beispiel-Postfach für diese Wohnung einspielen'}</button>`;
     const z = { einladen: 0, rueckfrage: 0, absage: 0 };
     const rows = liste.map(a => {
-      const p = IK.pruefe(w, a.extraktion); z[p.empfehlung] = (z[p.empfehlung] || 0) + 1;
+      const p = IK.pruefe(w, a.extraktion, a.verweigert); z[p.empfehlung] = (z[p.empfehlung] || 0) + 1;
       const vorher = UI.basis && UI.basis[a.id];
       const neu = vorher && vorher !== p.empfehlung;
       return `<li class="${neu ? 'geaendert' : ''}"><span class="wn">${esc(a.extraktion.name || 'Ohne Namen')}</span>${empBadge(p)}${neu ? `<span class="vorher">vorher ${esc(IK.EMPFEHLUNG[vorher].kurz)}</span>` : ''}</li>`;
@@ -289,12 +293,12 @@
     if (m.typ === 'slots') {
       const letzte = a.nachrichten.filter(x => x.typ === 'slots').pop() === m;
       if (kompakt) return `<div class="sys">Terminauswahl angeboten</div>`;
-      if (!letzte || a.status !== 'eingeladen') return `<div class="sys">${a.status === 'abgesagt' ? 'Terminauswahl geschlossen.' : 'Terminauswahl abgeschlossen.'}</div>`;
+      if (!letzte || a.status !== 'eingeladen') return `<div class="sys">${['abgesagt', 'zurueckgezogen'].includes(a.status) ? 'Terminauswahl geschlossen.' : 'Terminauswahl abgeschlossen.'}</div>`;
       const w = IK.wohnung(a.wohnungId), frei = IK.slots(w, S().anfragen).filter(x => x.frei);
       if (!frei.length) return `<div class="msg agent"><div class="m-kopf">${signet()}Assistent · Immo Kontor Bremen</div><div class="m-text">Im Moment sind alle Termine vergeben. Sobald die Verwaltung neue Besichtigungstage freigibt, erscheinen sie hier.</div></div>`;
       const tage = {};
       frei.slice(0, 12).forEach(x => { (tage[x.datum] = tage[x.datum] || []).push(x); });
-      return `<div class="msg agent slots-msg"><div class="m-kopf">${signet()}Assistent · Immo Kontor Bremen</div><div class="m-text">Freie Einzeltermine, je zehn Minuten:</div>${Object.keys(tage).map(d => `<div class="slot-tag">${esc(F.tagKurz(d))}</div><div class="slot-btns">${tage[d].map(x => `<button class="slot-btn" data-act="buchen" data-id="${a.id}" data-d="${x.datum}" data-z="${x.zeit}">${x.zeit}</button>`).join('')}</div>`).join('')}${frei.length > 12 ? `<div class="small">und ${frei.length - 12} weitere</div>` : ''}</div>`;
+      return `<div class="msg agent slots-msg"><div class="m-kopf">${signet()}Assistent · Immo Kontor Bremen</div><div class="m-text">Freie Einzeltermine, je zehn Minuten. Tippen Sie einen an oder schreiben Sie mir, welcher passt:</div>${Object.keys(tage).map(d => `<div class="slot-tag">${esc(F.tagKurz(d))}</div><div class="slot-btns">${tage[d].map(x => `<button class="slot-btn" data-act="buchen" data-id="${a.id}" data-d="${x.datum}" data-z="${x.zeit}">${x.zeit}</button>`).join('')}</div>`).join('')}${frei.length > 12 ? `<div class="small">und ${frei.length - 12} weitere</div>` : ''}</div>`;
     }
     const kopf = m.quelle === 'verwaltung' ? 'von der Verwaltung freigegeben' : m.offline ? 'Offline-Antwort' : '';
     return `<div class="msg agent ${m.typ === 'bestaetigung' ? 'bestaetigt' : ''}"><div class="m-kopf">${signet()}Assistent · Immo Kontor Bremen${kopf ? `<span class="m-quelle">${kopf}</span>` : ''}</div><div class="m-text">${esc(m.text)}</div><div class="m-zeit">${uhr(m.ts)}</div></div>`;
@@ -359,7 +363,7 @@
       case 'termin-ab': IK.sageTerminAb(id); render(); return;
       case 'zum-chat': s.rolle = 'bewerber'; s.sel.thread = id; s.sel.neu = null; IK.speichern(); render(); detailNachOben(); return;
       case 'zur-verwaltung': s.rolle = 'verwaltung'; s.tab = 'anfragen'; s.sel.anfrage = id; s.sel.filter = 'alle'; IK.speichern(); render(); detailNachOben(); return;
-      case 'w-edit': s.tab = 'wohnungen'; s.sel.edit = id; UI.basis = {}; s.anfragen.filter(a => a.wohnungId === id && a.extraktion).forEach(a => { UI.basis[a.id] = IK.pruefe(IK.wohnung(id), a.extraktion).empfehlung; }); IK.speichern(); render(); window.scrollTo({ top: $('#app').offsetTop - 80 }); return;
+      case 'w-edit': s.tab = 'wohnungen'; s.sel.edit = id; UI.basis = {}; s.anfragen.filter(a => a.wohnungId === id && a.extraktion).forEach(a => { UI.basis[a.id] = IK.pruefe(IK.wohnung(id), a.extraktion, a.verweigert).empfehlung; }); IK.speichern(); render(); window.scrollTo({ top: $('#app').offsetTop - 80 }); return;
       case 'w-fertig': s.sel.edit = null; UI.basis = null; IK.speichern(); render(); return;
       case 'w-neu': { const w = IK.neueWohnung(); s.sel.edit = w.id; UI.basis = {}; render(); return; }
       case 'w-del': { const w = IK.wohnung(id); if (w && confirm(`„${w.titel}“ und alle Anfragen dazu löschen?`)) { IK.loescheWohnung(id); s.sel.edit = null; render(); } return; }

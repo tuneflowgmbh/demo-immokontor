@@ -42,9 +42,10 @@
     einzug_wunsch: 'Ihren gewünschten Einzugstermin'
   };
   /* Ergebnis: Kriterien mit Ampel, Hinweise, fehlende Angaben, Empfehlung. */
-  IK.pruefe = function (w, e) {
-    const v = w.vorgaben, k = [], hinweise = [], fehlend = [], klaeren = [];
-    const add = (key, label, ampel, text) => { k.push({ key, label, ampel, text }); if (ampel === 'gelb' && text.endsWith('fehlt.')) fehlend.push(key); };
+  IK.pruefe = function (w, e, verweigert) {
+    const v = w.vorgaben, k = [], hinweise = [], klaeren = [];
+    let fehlend = [];
+    const add = (key, label, ampel, text) => { k.push({ key, label, ampel, text, fehlt: ampel === 'gelb' && /fehlt\./.test(text) }); };
     if (!e) return { kriterien: [], hinweise, fehlend: [], klaeren, empfehlung: 'leer', grund: '' };
     if (e.ist_bewerbung === false) return { kriterien: [], hinweise, fehlend: [], klaeren, empfehlung: 'sonstige', grund: 'Keine Wohnungsanfrage, als sonstige Post abgelegt.' };
 
@@ -95,7 +96,6 @@
       else if (e.einkommen_netto < noetig) add('einkommen_netto', 'Einkommen', 'rot', `${euro(e.einkommen_netto)} netto, Vorgabe ${euro(noetig)} (${fx}× Kaltmiete).`);
       else add('einkommen_netto', 'Einkommen', 'gruen', `${euro(e.einkommen_netto)} netto, Vorgabe ${euro(noetig)} (${fx}× Kaltmiete).`);
     }
-    if (k.length && k[k.length - 1].key === 'einkommen_netto' && k[k.length - 1].ampel === 'gelb' && !fehlend.includes('einkommen_netto')) fehlend.push('einkommen_netto');
 
     // Einzug
     if (!e.einzug_wunsch) add('einzug_wunsch', 'Einzug', 'gelb', 'Einzugstermin fehlt.');
@@ -103,6 +103,10 @@
     else if (v.einzug_von && e.einzug_wunsch < v.einzug_von) add('einzug_wunsch', 'Einzug', 'gruen', `Wunsch ab ${datum(e.einzug_wunsch)}, frei ab ${datum(v.einzug_von)}.`);
     else add('einzug_wunsch', 'Einzug', 'gruen', `Wunsch ${datum(e.einzug_wunsch)}, passt ins Fenster bis ${datum(v.einzug_bis || v.einzug_von)}.`);
 
+    const vw = verweigert || [];
+    k.forEach(x => { if (x.fehlt && vw.includes(x.key)) { x.fehlt = false; x.text = 'Möchte dazu keine Angabe machen.'; x.verweigert = true; } });
+    fehlend = k.filter(x => x.fehlt).map(x => x.key);
+    if (k.some(x => x.verweigert)) hinweise.unshift('Der Bewerber möchte einige Angaben nicht machen. Entscheiden Sie mit den vorhandenen Angaben oder fragen Sie selbst nach.');
     if (v.schufa === 'ja') hinweise.push(e.schufa_erwaehnt ? 'Schufa-Auskunft wird angeboten.' : 'Schufa-Auskunft wird mit der Einladung angefordert.');
     if (e.nachmieter_vom_altmieter) hinweise.push('Vom bisherigen Mieter vorgeschlagen. Wird wie jede Anfrage geprüft.');
     if (v.sonstiges) hinweise.push('Vorgabe Sonstiges: ' + v.sonstiges);
@@ -114,6 +118,8 @@
     else { empfehlung = 'einladen'; grund = 'Alle Vorgaben erfüllt.'; }
     return { kriterien: k, hinweise, fehlend, klaeren, empfehlung, grund };
   };
+
+  IK.pruefeAnfrage = a => { const w = IK.wohnung(a.wohnungId); return w ? IK.pruefe(w, a.extraktion, a.verweigert) : null; };
 
   IK.EMPFEHLUNG = {
     einladen: { label: 'Passt · Einladen', kurz: 'Einladen', ton: 'gruen' },
